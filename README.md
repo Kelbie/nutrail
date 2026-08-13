@@ -11,77 +11,73 @@ donor ──lightning/onchain──▶ Cashu mint ──ecash──▶ nutrail (
 donor ──cashu token/creq───────────────────────▶ nutrail (VPS)
                                                      │
                                 surplus ──melt──▶ your lightning address
-                                runway  ──melt──▶ BitLaunch hosting invoice
+                                runway  ──melt──▶ LNVPS renewal invoice
 ```
 
 The mint is the always-online Lightning node, so you never run one. Built on
 [CDK](https://github.com/cashubtc/cdk).
 
-## Spin up (one command, paid in sats)
+## Spin up (paid in sats, ~6-9k sats/month)
 
-You need: a [BitLaunch](https://bitlaunch.io) account with an API token
-([create one here](https://app.bitlaunch.io/account/api)), any lightning wallet,
-and `curl`, `jq`, `openssl` (plus `qrencode` for the terminal QR).
+You need [bun](https://bun.sh), `ssh-keygen`, and any lightning wallet. No
+account signup anywhere — your LNVPS identity is a nostr key derived from the
+seedphrase (NIP-06).
 
 ```sh
-git clone https://github.com/Kelbie/nutrail && cd nutrail
-BL_API_TOKEN=your-token PAYOUT_LN_ADDRESS=you@wallet.com ./deploy/spinup.sh
+git clone https://github.com/Kelbie/nutrail && cd nutrail/deploy
+bun install && bun spinup.ts
 ```
 
-What happens:
+The CLI walks you through it:
 
-1. If your BitLaunch balance is under $10, the script creates a **$20 Lightning
-   funding invoice and shows it as a QR in your terminal** (BitLaunch's minimum
-   deposit). Pay it with any lightning wallet; the script waits for the credit.
-2. **Wallet seed entropy is generated locally** on your machine with
-   `openssl rand -hex 32` (OS CSPRNG, 32 bytes → a 24-word BIP-39 mnemonic) and
-   passed to the server as the `SEED_ENTROPY_HEX` env var. Secrets are written
-   to a local `chmod 600` file.
-3. A **$10/mo 1GB BitLaunch VPS** (`nibble-1024`, billed hourly from your
-   balance) boots straight into nutrail via Docker, behind Caddy with
-   automatic HTTPS on a zero-config `<ip>.sslip.io` domain.
-4. It prints your donate page, admin URL, and the embed snippet:
+1. **Generates a 12-word seedphrase locally** (OS CSPRNG). Write it down —
+   it is the ecash wallet *and* the hosting account identity.
+2. **Pick a mint** (arrow keys): `mint.minibits.cash/Bitcoin` (real sats,
+   recommended), `testnut.cashudevkit.org` (CDK test mint — fake sats, so the
+   server *cannot* pay its own renewals), or any custom mint URL.
+3. Enter the **lightning address** donations get swept to, and pick a region
+   with live prices (Dublin ~€3.30/mo ≈ 6k sats; London/Quebec ~€5.00/mo ≈
+   9k sats — London recommended, Dublin has had most of LNVPS's incidents).
+4. LNVPS creates the VM and the CLI shows the **first month's Lightning
+   invoice as a QR in your terminal** — pay it from any wallet.
+5. The box is bootstrapped over SSH: Docker + Caddy with automatic HTTPS on
+   a zero-config `<ip>.sslip.io` domain, running the prebuilt
+   `ghcr.io/kelbie/nutrail` image. You get the donate page, admin URL, and
+   embed snippet:
 
 ```html
 <script src="https://your-server.sslip.io/donate/widget.js" defer></script>
 ```
 
-**First thing after spin-up: open the admin URL and write the 24 words on
-paper.** Then delete the local secrets file.
-
-Knobs (env vars for `spinup.sh`): `MINT_URL` (default
-`mint.minibits.cash/Bitcoin` — pick a mint you trust), `REGION` (default
-`lon1`), `RESERVE_SATS` (default `30000`), `TOPUP_USD` (default `20`), `SIZE`,
-`NAME`, `IMAGE`.
+`bun spinup.ts --preflight` checks API reachability, auth, and prices without
+spending anything.
 
 ## The self-funding runway
 
-- The sweeper runs every 30s: everything above `RESERVE_SATS` melts to your
+- The sweeper runs every 30s: everything above the reserve melts to your
   `PAYOUT_LN_ADDRESS`; the reserve stays in the wallet as ecash.
-- Every 6 hours the server checks its own BitLaunch balance (`GET /user`).
-  When it drops below `BL_MIN_BALANCE_USD` (default $5 ≈ two weeks of runway),
-  it creates a `BL_TOPUP_USD` (default $20, the minimum) Lightning funding
-  transaction and **pays the invoice by melting its ecash reserve**.
-- If the reserve can't cover a top-up, it emits a `runway_underfunded` event
-  (visible on `/events` and the admin page) and retries next cycle.
-- `GET /runway` (authed) reports wallet sats, reserve, BitLaunch balance, and
-  days of hosting left.
-
-Sizing: at $10/mo hosting, a $20 top-up is roughly 60 days of runway;
-`RESERVE_SATS=30000` covers a top-up with margin at current prices. Donations
-beyond that go straight to your wallet.
+- **The reserve is 1.5× one month's hosting** (50% headroom for bitcoin price
+  moves), re-derived from the actual invoice at every renewal.
+- Every 6 hours the server checks its own VM expiry (NIP-98-signed call to
+  the LNVPS API using the key derived from its seed). **Within 3 days of
+  expiry it fetches the renewal invoice and pays it by melting the reserve.**
+- If the reserve can't cover a renewal, it emits `runway_underfunded` on
+  `/events` and retries every cycle.
+- `GET /runway` (authed) reports wallet sats, reserve, VM expiry, and days
+  left.
 
 ## Environment (server)
 
 | Var | Required | Default | Purpose |
 |---|---|---|---|
 | `SETUP_TOKEN` | yes | — | Bearer token for the wallet API + admin page |
-| `SEED_ENTROPY_HEX` | no | — | 16–32 bytes of hex entropy → deterministic BIP-39 mnemonic (what `spinup.sh` passes). Without it, the server generates from its own CSPRNG on first boot |
+| `SEED_ENTROPY_HEX` | no | — | 16–32 bytes of hex entropy → deterministic BIP-39 mnemonic (what the spinup CLI passes). Without it, the server generates from its own CSPRNG on first boot |
 | `MINT_URL` | no | testnut | The Cashu mint to receive through |
 | `PAYOUT_LN_ADDRESS` | no | — | **Any lightning address**; the sweeper melts everything above the reserve to it every 30s. Unset = accumulate as ecash |
-| `RESERVE_SATS` | no | `0` | Ecash held back as the hosting runway |
-| `BL_API_TOKEN` | no | — | Enables self-funding against your BitLaunch account |
-| `BL_MIN_BALANCE_USD` / `BL_TOPUP_USD` | no | `5` / `20` | When to top up, and by how much |
+| `LNVPS_VM_ID` | no | — | Enables self-funding: the VM this server runs on (set by spinup) |
+| `RENEWAL_COST_MSATS` | no | — | First month's invoice amount; seeds the reserve at 1.5× (set by spinup) |
+| `RESERVE_SATS` | no | `0` | Manual reserve override when not using LNVPS self-funding |
+| `LNVPS_API` | no | `api.lnvps.net` | LNVPS API base |
 | `SWEEP_THRESHOLD_SATS` | no | `100` | Sweep only when the surplus reaches this |
 | `RESTORE_MNEMONIC` | no | — | NUT-13 restore on a fresh volume, then unset it |
 | `PUBLIC_URL` | no | derived | External base URL used in the NUT-18 `creq` transport |
@@ -105,7 +101,7 @@ and `{output}` / `{error}` JSON envelope. Wallet routes require
 | `GET /mints/list`, `POST /mints/info` | `/mints/*` | single mint in this PoC |
 | `GET /history` | `/history` | PoC: pending melt quotes only |
 | `GET /events` | `/events` | SSE: `received`, `minted`, `swept`, `self_funded`, `runway_underfunded` |
-| `GET /runway` | — | wallet sats, reserve, BitLaunch balance + days left |
+| `GET /runway` | — | wallet sats, reserve, VM expiry + days left |
 | `GET /admin`, `GET /admin/mnemonic` | — | seed backup UI |
 
 Public widget surface (CORS `*`, no auth): `GET /donate/config` (capability-
@@ -121,18 +117,21 @@ detected methods + reusable NUT-18 `creq`), `POST /donate/quote {method, amount?
   (~$20-30). Pick a reputable mint and keep the reserve small.
 - **The VPS host can read the box** (env vars, volume). The seed protects the
   float and the runway, not savings. Same trade as any hosted hot wallet.
-- **`BL_API_TOKEN` lives on the server** so it can fund itself. That token can
-  also create servers on your account — use a dedicated BitLaunch account
-  funded with small amounts, or omit the token and top up manually.
+- **The server holds its own hosting identity** (nostr key from its seed).
+  Anyone with the seed controls the float, the runway, and the VM account —
+  one more reason the words belong on paper and the balance stays small.
+- **LNVPS is a young, small operation** (~92% lifetime uptime, solid recent
+  record). The design degrades gracefully: if the box dies, redeploy with the
+  same seedphrase and restore.
 - **Failed melts are recoverable.** Proofs persist in sqlite; the sweeper
   retries (`finalize_pending_melts` + saga recovery on boot); worst case the
-  24 words restore unspent proofs on any CDK/Nutshell wallet (NUT-13, per-mint).
+  seed words restore unspent proofs on any CDK/Nutshell wallet (NUT-13, per-mint).
 
 ## Alternative: Railway
 
 The repo still ships `railway.toml` + a template; see git history for the
 Railway walkthrough (`railway init` → volume → variables → `railway up`).
-Railway can't be paid in sats, which is why BitLaunch is the primary path.
+Railway can't be paid in sats, which is why LNVPS is the primary path.
 
 ## Local dev
 

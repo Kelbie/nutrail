@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,12 +47,14 @@ struct App {
     setup_token: String,
     payout_address: Option<String>,
     sweep_threshold: u64,
-    /// Sats held back from every sweep — the hosting-bill runway kept as ecash.
-    reserve_sats: u64,
+    /// Sats held back from every sweep — the hosting runway kept as ecash.
+    /// Re-derived as monthly cost × 1.5 after every renewal.
+    reserve_sats: AtomicU64,
+    /// Latest hosting status from the funding loop, served at GET /runway.
+    runway: tokio::sync::RwLock<Option<serde_json::Value>>,
     events: broadcast::Sender<String>,
     onchain_supported: bool,
     public_url: Option<String>,
-    bl_token: Option<String>,
 }
 
 impl App {
@@ -181,7 +184,7 @@ async fn status(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
         "mintUrl": app.mint_url,
         "payoutAddress": app.payout_address,
         "sweepThresholdSats": app.sweep_threshold,
-        "reserveSats": app.reserve_sats,
+        "reserveSats": app.reserve_sats.load(Ordering::Relaxed),
     }))
 }
 
@@ -334,16 +337,10 @@ async fn melt_by_quote_id(app: &App, quote_id: &str) -> Result<u64, cdk::Error> 
 async fn runway(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     require_auth!(&app, &headers, None);
     let wallet_sats = app.wallet.total_balance().await.map(u64::from).unwrap_or(0);
-    let hosting = match &app.bl_token {
-        Some(token) => {
-            let client = reqwest::Client::new();
-            funding::account_status(&client, token).await.ok()
-        }
-        None => None,
-    };
+    let hosting = app.runway.read().await.clone();
     ok(json!({
         "walletSats": wallet_sats,
-        "reserveSats": app.reserve_sats,
+        "reserveSats": app.reserve_sats.load(Ordering::Relaxed),
         "hosting": hosting,
     }))
 }
@@ -598,10 +595,11 @@ async fn sweeper(app: Arc<App>) {
         }
 
         if let Some(address) = &app.payout_address {
+            let reserve = app.reserve_sats.load(Ordering::Relaxed);
             match app.wallet.total_balance().await {
                 // Everything above the runway reserve gets swept out.
-                Ok(bal) if u64::from(bal) >= app.reserve_sats + app.sweep_threshold => {
-                    let sweepable = u64::from(bal) - app.reserve_sats;
+                Ok(bal) if u64::from(bal) >= reserve + app.sweep_threshold => {
+                    let sweepable = u64::from(bal) - reserve;
                     if let Err(e) = sweep_to(&app, address, sweepable).await {
                         tracing::warn!("sweep failed (will retry): {e}");
                     }
@@ -668,9 +666,14 @@ async fn main() -> anyhow_lite::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(100);
-    let reserve_sats: u64 = std::env::var("RESERVE_SATS")
+    // Initial reserve: derived from the first month's invoice when the spinup
+    // CLI passes RENEWAL_COST_MSATS; the funding loop re-derives it after every
+    // renewal (monthly cost × 1.5).
+    let reserve_sats: u64 = std::env::var("RENEWAL_COST_MSATS")
         .ok()
         .and_then(|v| v.parse().ok())
+        .map(funding::reserve_from_cost_msats)
+        .or_else(|| std::env::var("RESERVE_SATS").ok().and_then(|v| v.parse().ok()))
         .unwrap_or(0);
 
     let (mnemonic, restored_from_env) = load_or_create_mnemonic(&data_dir)?;
@@ -728,11 +731,11 @@ async fn main() -> anyhow_lite::Result<()> {
         setup_token,
         payout_address,
         sweep_threshold,
-        reserve_sats,
+        reserve_sats: AtomicU64::new(reserve_sats),
+        runway: tokio::sync::RwLock::new(None),
         events: events_tx,
         onchain_supported,
         public_url,
-        bl_token: std::env::var("BL_API_TOKEN").ok().filter(|s| !s.is_empty()),
     });
 
     if app.payout_address.is_none() {
@@ -742,8 +745,8 @@ async fn main() -> anyhow_lite::Result<()> {
     tokio::spawn(sweeper(app.clone()));
 
     if let Some(cfg) = funding::FundingConfig::from_env() {
-        if app.reserve_sats == 0 {
-            tracing::warn!("self-funding is on but RESERVE_SATS=0 — sweeps will leave nothing to pay hosting with");
+        if app.reserve_sats.load(Ordering::Relaxed) == 0 {
+            tracing::warn!("self-funding is on but the reserve is 0 — set RENEWAL_COST_MSATS or RESERVE_SATS so sweeps leave runway behind");
         }
         tokio::spawn(funding::run(app.clone(), cfg));
     }

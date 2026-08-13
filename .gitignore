@@ -1,3 +1,6 @@
 /target
 /data
 .setup-token-DO-NOT-COMMIT
+deploy/node_modules
+deploy/nutrail-ssh*
+nutrail-secrets-*
