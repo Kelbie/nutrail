@@ -15,6 +15,7 @@
     f.title = 'Donate sats';
     f.style.cssText = 'border:0;width:400px;max-width:95vw;height:620px;max-height:92vh;background:transparent;color-scheme:normal;';
     f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups');
+    f.setAttribute('allow', 'clipboard-write');
     return f;
   }
 

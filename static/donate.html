@@ -365,7 +365,13 @@ $('oc-go').onclick = async () => {
 
 /* ---- copy ---- */
 document.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => {
-  await navigator.clipboard.writeText($(b.dataset.copy).textContent);
+  const text = $(b.dataset.copy).textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    // Clipboard API blocked (iframe permission): fall back to a selectable prompt.
+    window.prompt('Copy with ⌘C / Ctrl+C:', text);
+  }
   const was = b.textContent; b.textContent = 'Copied';
   setTimeout(() => { b.textContent = was; }, 1200);
 });
