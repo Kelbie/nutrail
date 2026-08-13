@@ -10,11 +10,11 @@
 
 import * as p from "@clack/prompts";
 import { randomBytes } from "crypto";
-import { entropyToMnemonic } from "@scure/bip39";
+import { entropyToMnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english";
-import { privateKeyFromSeedWords } from "nostr-tools/nip06";
 import { getToken } from "nostr-tools/nip98";
-import { finalizeEvent } from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import { nip19 } from "nostr-tools";
 // @ts-ignore — no types shipped
 import qrcode from "qrcode-terminal";
 
@@ -24,6 +24,11 @@ const SPEC = { cpu: 1, memory: 1 * GiB, disk: 10 * GiB, disk_type: "ssd", disk_i
 const IMAGE = process.env.NUTRAIL_IMAGE ?? "ghcr.io/kelbie/nutrail:latest";
 
 // ---------------------------------------------------------------- api client
+// Nostr identity = first 32 bytes of the BIP-39 seed, exactly how cashu.me
+// derives its wallet key (stores/nostr.ts walletSeedGenerateKeyPair). The
+// server derives the same key from SEED_ENTROPY_HEX, and importing the words
+// into cashu.me gives you the same npub — that identity IS the LNVPS login.
+const nostrKeyFromMnemonic = (m: string) => mnemonicToSeedSync(m).slice(0, 32);
 let secretKey: Uint8Array | null = null;
 const sign = (e: any) => finalizeEvent(e, secretKey!);
 
@@ -67,7 +72,7 @@ p.intro("nutrail → LNVPS");
 if (preflight) {
   const entropy = randomBytes(16);
   const mnemonic = entropyToMnemonic(entropy, wordlist);
-  secretKey = privateKeyFromSeedWords(mnemonic);
+  secretKey = nostrKeyFromMnemonic(mnemonic);
   const vms = await api("GET", "/api/v1/vm");
   const regions = await regionOptions();
   p.log.success(`auth ok (fresh key sees ${vms.length} VMs)`);
@@ -80,7 +85,9 @@ if (preflight) {
 const entropy = randomBytes(16);
 const entropyHex = entropy.toString("hex");
 const mnemonic = entropyToMnemonic(entropy, wordlist);
-secretKey = privateKeyFromSeedWords(mnemonic);
+secretKey = nostrKeyFromMnemonic(mnemonic);
+const npub = nip19.npubEncode(getPublicKey(secretKey));
+const nsec = nip19.nsecEncode(secretKey);
 
 p.note(mnemonic.split(" ").map((w, i) => `${String(i + 1).padStart(2)}. ${w}`).join("\n"),
   "Your seedphrase — WRITE THESE 12 WORDS ON PAPER");
@@ -242,7 +249,28 @@ s.stop(ready ? "Live" : "Not responding yet — give it a few minutes");
 
 // 10. secrets + summary
 const secretsFile = `nutrail-secrets-${vm.id}.txt`;
-await Bun.write(secretsFile, `mnemonic: ${mnemonic}\nentropy_hex: ${entropyHex}\nsetup_token: ${setupToken}\nvm_id: ${vm.id}\nssh: ssh -i ${keyPath} ${image.default_username}@${ip}\n`);
+await Bun.write(secretsFile, `# nutrail deployment record — keep offline; delete once the words are on paper
+mnemonic:     ${mnemonic}
+entropy_hex:  ${entropyHex}
+setup_token:  ${setupToken}
+
+# LNVPS — there are no username/password creds; the account IS this nostr key.
+# Manage the VM at https://lnvps.net (log in with a nostr extension holding the nsec).
+lnvps_vm_id:  ${vm.id}
+lnvps_api:    ${API}
+npub:         ${npub}
+nsec:         ${nsec}
+first_month:  ${sats(costMsats).toLocaleString()} sats (${costMsats} msats)
+
+# server
+url:          https://${domain}
+donate:       https://${domain}/donate
+admin:        https://${domain}/admin?token=${setupToken}
+ip:           ${ip}
+ssh:          ssh -i ${keyPath} ${image.default_username}@${ip}
+mint:         ${mintUrl}
+payout:       ${payout}
+`);
 await Bun.spawn(["chmod", "600", secretsFile]).exited;
 
 p.note(
@@ -250,11 +278,15 @@ p.note(
 admin        https://${domain}/admin?token=${setupToken}
 embed        <script src="https://${domain}/donate/widget.js" defer></script>
 
+LNVPS panel  https://lnvps.net — log in with a nostr extension
+             holding the nsec from the secrets file (VM #${vm.id})
+
 Sweeps to ${payout}, keeps ~${Math.ceil((costMsats / 1000) * 1.5).toLocaleString()} sats
 (1.5× monthly cost) as ecash runway, and renews itself ~3 days
 before expiry by melting that runway.${isTestnut ? "\n\n⚠ testnut mint: self-renewal will NOT work — renew manually." : ""}
 
-Secrets in ./${secretsFile} — delete after the words are on paper.`,
+Everything above is also in ./${secretsFile} (chmod 600) —
+delete it after the words are on paper.`,
   "done",
 );
 p.outro(`Monthly cost: ~${sats(costMsats).toLocaleString()} sats, paid by the server itself.`);

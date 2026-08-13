@@ -17,11 +17,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bip39::Mnemonic;
-use bitcoin::bip32::{DerivationPath, Xpriv};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{Message, Secp256k1};
-use bitcoin::Network;
 use cdk::nuts::nut00::KnownMethod;
 use cdk::nuts::PaymentMethod;
 use serde_json::{json, Value};
@@ -61,14 +59,19 @@ pub fn reserve_from_cost_msats(cost_msats: u64) -> u64 {
 // NIP-06 key + NIP-98 request signing
 // ---------------------------------------------------------------------------
 
+/// The cashu-ecosystem wallet nostr identity: the first 32 bytes of the
+/// BIP-39 seed used directly as the secret key. This matches cashu.me's
+/// `walletSeedGenerateKeyPair` (`walletStore.seed.slice(0, 32)`), so the same
+/// seedphrase imported into cashu.me controls the same nostr identity —
+/// including this server's LNVPS account. (NIP-06's m/44'/1237'/0'/0/0 is the
+/// general nostr convention, but cashu wallets don't use it for the wallet key;
+/// NUT-27 defines a third, backup-only derivation.)
 pub fn nostr_keypair(mnemonic: &str) -> Result<Keypair, String> {
     let mnemonic = Mnemonic::from_str(mnemonic).map_err(|e| e.to_string())?;
     let seed = mnemonic.to_seed_normalized("");
     let secp = Secp256k1::new();
-    let master = Xpriv::new_master(Network::Bitcoin, &seed).map_err(|e| e.to_string())?;
-    let path = DerivationPath::from_str("m/44'/1237'/0'/0/0").map_err(|e| e.to_string())?;
-    let child = master.derive_priv(&secp, &path).map_err(|e| e.to_string())?;
-    Ok(Keypair::from_secret_key(&secp, &child.private_key))
+    let sk = bitcoin::secp256k1::SecretKey::from_slice(&seed[..32]).map_err(|e| e.to_string())?;
+    Ok(Keypair::from_secret_key(&secp, &sk))
 }
 
 pub fn nostr_pubkey_hex(keypair: &Keypair) -> String {
@@ -218,6 +221,7 @@ async fn tick(
 
     *app.runway.write().await = Some(json!({
         "provider": "lnvps",
+        "panel": "https://lnvps.net",
         "vmId": cfg.vm_id,
         "expires": expires,
         "daysLeft": (days_left * 10.0).round() / 10.0,
@@ -277,16 +281,18 @@ async fn tick(
 mod tests {
     use super::*;
 
-    /// NIP-06 test vector from the spec.
+    /// cashu.me-compatible derivation: sk = bip39_seed[..32].
+    /// Expected value computed with nostr-tools + @scure/bip39 (same libs
+    /// cashu.me uses); the spinup CLI must derive the identical key.
     #[test]
-    fn nip06_vector() {
+    fn cashume_wallet_key_vector() {
         let kp = nostr_keypair(
             "leader monkey parrot ring guide accident before fence cannon height naive bean",
         )
         .unwrap();
         assert_eq!(
             nostr_pubkey_hex(&kp),
-            "17162c921dc4d2518f9a101db33695df1afb56ab82f5ff3e5da6eec3ca5cd917"
+            "dd143097a139717776b5ba934649602121fb39b1ad69be46f1c9de347ede08c1"
         );
     }
 
