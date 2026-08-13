@@ -25,7 +25,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/kelbie/nutrail:latest
+            ghcr.io/kelbie/nutrail:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
