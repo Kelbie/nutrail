@@ -10,7 +10,7 @@
 
 import * as p from "@clack/prompts";
 import { randomBytes } from "crypto";
-import { entropyToMnemonic, mnemonicToSeedSync } from "@scure/bip39";
+import { entropyToMnemonic, mnemonicToEntropy, mnemonicToSeedSync, validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english";
 import { getToken } from "nostr-tools/nip98";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
@@ -82,18 +82,68 @@ if (preflight) {
 }
 
 // 1. seedphrase — generated locally, never sent anywhere except as entropy to your own VM
-const entropy = randomBytes(16);
-const entropyHex = entropy.toString("hex");
-const mnemonic = entropyToMnemonic(entropy, wordlist);
+const mode = await p.select({
+  message: "Wallet identity",
+  options: [
+    { value: "new", label: "Generate a new seedphrase" },
+    { value: "resume", label: "Use an existing seedphrase", hint: "resume a failed run / reuse an identity" },
+  ],
+});
+if (p.isCancel(mode)) process.exit(1);
+
+let mnemonic: string;
+let entropyHex: string;
+if (mode === "resume") {
+  const words = await p.text({
+    message: "Enter the 12 words",
+    validate: (v) => (validateMnemonic(v.trim().toLowerCase(), wordlist) ? undefined : "Not a valid BIP-39 mnemonic"),
+  });
+  if (p.isCancel(words)) process.exit(1);
+  mnemonic = (words as string).trim().toLowerCase();
+  entropyHex = Buffer.from(mnemonicToEntropy(mnemonic, wordlist)).toString("hex");
+} else {
+  const entropy = randomBytes(16);
+  entropyHex = entropy.toString("hex");
+  mnemonic = entropyToMnemonic(entropy, wordlist);
+}
 secretKey = nostrKeyFromMnemonic(mnemonic);
 const npub = nip19.npubEncode(getPublicKey(secretKey));
 const nsec = nip19.nsecEncode(secretKey);
 
-p.note(mnemonic.split(" ").map((w, i) => `${String(i + 1).padStart(2)}. ${w}`).join("\n"),
-  "Your seedphrase — WRITE THESE 12 WORDS ON PAPER");
-p.log.warn("These words are the ecash wallet AND the hosting account identity.");
-const written = await p.confirm({ message: "Written down?" });
-if (p.isCancel(written) || !written) { p.cancel("Come back when it's on paper."); process.exit(1); }
+if (mode === "new") {
+  p.note(mnemonic.split(" ").map((w, i) => `${String(i + 1).padStart(2)}. ${w}`).join("\n"),
+    "Your seedphrase — WRITE THESE 12 WORDS ON PAPER");
+  p.log.warn("These words are the ecash wallet AND the hosting account identity.");
+  const written = await p.confirm({ message: "Written down?" });
+  if (p.isCancel(written) || !written) { p.cancel("Come back when it's on paper."); process.exit(1); }
+}
+
+// 1b. LNVPS requires a verified email on the account before the first VM.
+{
+  const acct = (await api("GET", "/api/v1/account").catch(() => null)) ?? {};
+  if (!acct.email_verified) {
+    const email = await p.text({
+      message: "Email for LNVPS account verification (required before creating a VM)",
+      placeholder: "you@example.com",
+      initialValue: acct.email ?? "",
+      validate: (v) => (v.includes("@") && v.includes(".") ? undefined : "Enter a real inbox"),
+    });
+    if (p.isCancel(email)) process.exit(1);
+    if (acct.email !== email || !acct.email) {
+      await api("PATCH", "/api/v1/account", { ...acct, email, contact_email: true });
+    }
+    p.log.step("Verification email sent — click the link in your inbox (check spam).");
+    const vs = p.spinner();
+    vs.start("Waiting for email verification");
+    for (let i = 0; ; i++) {
+      await sleep(8000);
+      const a = await api("GET", "/api/v1/account").catch(() => null);
+      if (a?.email_verified) break;
+      if (i > 150) { vs.stop("Timed out"); p.cancel("Verify the email and rerun with 'Use an existing seedphrase'."); process.exit(1); }
+    }
+    vs.stop("Email verified");
+  }
+}
 
 // 2. mint
 const mint = await p.select({
@@ -133,7 +183,9 @@ if (p.isCancel(pricingId)) process.exit(1);
 // 5. ssh key + image
 s.start("Registering SSH key");
 const keyPath = `${process.cwd()}/nutrail-ssh`;
-await Bun.spawn(["ssh-keygen", "-t", "ed25519", "-f", keyPath, "-N", "", "-C", "nutrail", "-q"]).exited;
+if (!(await Bun.file(keyPath).exists())) {
+  await Bun.spawn(["ssh-keygen", "-t", "ed25519", "-f", keyPath, "-N", "", "-C", "nutrail", "-q"]).exited;
+}
 const pubkey = (await Bun.file(`${keyPath}.pub`).text()).trim();
 const sshKey = await api("POST", "/api/v1/ssh-key", { name: `nutrail-${Date.now()}`, key_data: pubkey });
 const images = await api("GET", "/api/v1/image", undefined, false);
@@ -146,6 +198,25 @@ const vm = await api("POST", "/api/v1/vm/custom-template", {
   pricing_id: pricingId, ...SPEC, image_id: image.id, ssh_key_id: sshKey.id,
 });
 s.stop(`VM #${vm.id} created (unpaid)`);
+
+// Write the deployment record NOW — a crash later must not lose the identity.
+const secretsFile = `nutrail-secrets-${vm.id}.txt`;
+async function writeSecrets(extra = "") {
+  await Bun.write(secretsFile, `# nutrail deployment record — keep offline; delete once the words are on paper
+mnemonic:     ${mnemonic}
+entropy_hex:  ${entropyHex}
+
+# LNVPS — there are no username/password creds; the account IS this nostr key.
+# Manage the VM at https://lnvps.net (log in with a nostr extension holding the nsec).
+lnvps_vm_id:  ${vm.id}
+lnvps_api:    ${API}
+npub:         ${npub}
+nsec:         ${nsec}
+${extra}`);
+  await Bun.spawn(["chmod", "600", secretsFile]).exited;
+}
+await writeSecrets();
+p.log.info(`Deployment record: ./${secretsFile}`);
 
 const payment = await api("GET", `/api/v1/vm/${vm.id}/renew?method=lightning`);
 const invoice: string = payment.data.lightning;
@@ -248,19 +319,8 @@ for (let i = 0; i < 60 && !ready; i++) {
 s.stop(ready ? "Live" : "Not responding yet — give it a few minutes");
 
 // 10. secrets + summary
-const secretsFile = `nutrail-secrets-${vm.id}.txt`;
-await Bun.write(secretsFile, `# nutrail deployment record — keep offline; delete once the words are on paper
-mnemonic:     ${mnemonic}
-entropy_hex:  ${entropyHex}
+await writeSecrets(`first_month:  ${sats(costMsats).toLocaleString()} sats (${costMsats} msats)
 setup_token:  ${setupToken}
-
-# LNVPS — there are no username/password creds; the account IS this nostr key.
-# Manage the VM at https://lnvps.net (log in with a nostr extension holding the nsec).
-lnvps_vm_id:  ${vm.id}
-lnvps_api:    ${API}
-npub:         ${npub}
-nsec:         ${nsec}
-first_month:  ${sats(costMsats).toLocaleString()} sats (${costMsats} msats)
 
 # server
 url:          https://${domain}
@@ -271,7 +331,6 @@ ssh:          ssh -i ${keyPath} ${image.default_username}@${ip}
 mint:         ${mintUrl}
 payout:       ${payout}
 `);
-await Bun.spawn(["chmod", "600", secretsFile]).exited;
 
 p.note(
   `donate page  https://${domain}/donate
