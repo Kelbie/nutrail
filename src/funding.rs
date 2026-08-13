@@ -103,22 +103,9 @@ fn nip98_header(keypair: &Keypair, url: &str, method: &str) -> Result<String, St
         "content": "",
         "sig": sig.to_string(),
     });
-    Ok(format!("Nostr {}", b64(event.to_string().as_bytes())))
-}
-
-fn b64(data: &[u8]) -> String {
-    // Standard alphabet with padding, RFC 4648.
-    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        out.push(T[(n >> 18) as usize & 63] as char);
-        out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
-    }
-    out
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(event.to_string());
+    Ok(format!("Nostr {encoded}"))
 }
 
 async fn api_get(
@@ -142,36 +129,10 @@ async fn api_get(
     Ok(body["data"].clone())
 }
 
-/// Parse an RFC3339 timestamp ("2026-12-31T23:59:59Z", optional fractional
-/// seconds / offset) into a unix timestamp. Minimal on purpose.
 fn parse_rfc3339(s: &str) -> Option<u64> {
-    let s = s.trim();
-    let (date, rest) = s.split_once('T')?;
-    let mut d = date.split('-');
-    let (y, m, day): (i64, u32, u32) = (
-        d.next()?.parse().ok()?,
-        d.next()?.parse().ok()?,
-        d.next()?.parse().ok()?,
-    );
-    let time_part = rest
-        .trim_end_matches('Z')
-        .split(['+', '.'])
-        .next()?;
-    let mut t = time_part.split(':');
-    let (hh, mm, ss): (u64, u64, u64) = (
-        t.next()?.parse().ok()?,
-        t.next()?.parse().ok()?,
-        t.next().unwrap_or("0").parse().ok()?,
-    );
-    // Days since epoch via civil-from-days inverse (Howard Hinnant's algorithm).
-    let y = y - i64::from(m <= 2);
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as u64;
-    let mp = u64::from((m + 9) % 12);
-    let doy = (153 * mp + 2) / 5 + u64::from(day) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era as u64 * 146097 + doe - 719468;
-    Some(days * 86400 + hh * 3600 + mm * 60 + ss)
+    chrono::DateTime::parse_from_rfc3339(s.trim())
+        .ok()
+        .map(|dt| dt.timestamp().max(0) as u64)
 }
 
 // ---------------------------------------------------------------------------
@@ -294,13 +255,6 @@ mod tests {
             nostr_pubkey_hex(&kp),
             "dd143097a139717776b5ba934649602121fb39b1ad69be46f1c9de347ede08c1"
         );
-    }
-
-    #[test]
-    fn b64_roundtrip() {
-        assert_eq!(b64(b"hello"), "aGVsbG8=");
-        assert_eq!(b64(b"hi"), "aGk=");
-        assert_eq!(b64(b"abc"), "YWJj");
     }
 
     #[test]

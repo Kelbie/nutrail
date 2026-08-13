@@ -162,7 +162,7 @@
     <!-- Lightning -->
     <section class="pane on" id="pane-lightning" role="tabpanel">
       <div id="ln-pick" style="display:flex;flex-direction:column;gap:14px">
-        <div class="chips" data-for="ln">
+        <div class="chips">
           <button data-a="500">500</button>
           <button data-a="2100" class="sel">2 100</button>
           <button data-a="10000">10 000</button>
@@ -226,7 +226,7 @@
 'use strict';
 const base = location.origin;
 const $ = (id) => document.getElementById(id);
-const state = { amount: 2100, poll: null, methods: [] };
+const state = { amount: 2100, poll: null };
 
 const post = async (path, body) => {
   const r = await fetch(base + path, {
@@ -381,7 +381,6 @@ document.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => 
   try {
     const r = await (await fetch(base + '/donate/config')).json();
     const cfg = r.output;
-    state.methods = cfg.methods;
     if (cfg.creq) {
       $('cq-qr').src = qrSrc(cfg.creq);
       $('cq-str').textContent = cfg.creq;

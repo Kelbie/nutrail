@@ -1,7 +1,8 @@
-//! nutrail — minimal CDK-based donation wallet for Railway.
+//! nutrail — minimal CDK-based donation wallet that pays its own hosting.
 //!
-//! Receives donations via a Cashu mint (bolt11 invoices + pasted ecash tokens)
-//! and auto-melts the balance to the owner's self-custodial lightning address.
+//! Receives donations via a Cashu mint (bolt11/onchain quotes + ecash tokens)
+//! and auto-melts the surplus to the owner's self-custodial lightning address,
+//! holding back one month's LNVPS renewal (+10%) as the runway (see funding.rs).
 //!
 //! The wallet API mirrors cocod's route table (https://github.com/Egge21M/cocod):
 //! `/ping`, `/status`, `/balance`, `/receive/{cashu,bolt11}`, `/send/{cashu,bolt11}`,
@@ -73,9 +74,7 @@ impl App {
             .unwrap_or(if host.starts_with("localhost") { "http" } else { "https" });
         format!("{proto}://{host}")
     }
-}
 
-impl App {
     fn emit(&self, kind: &str, data: Value) {
         let _ = self
             .events
@@ -95,7 +94,7 @@ fn err(status: StatusCode, msg: impl ToString) -> Response {
 // Seed handling: read from volume, restore from env, or generate on first boot
 // ---------------------------------------------------------------------------
 
-fn load_or_create_mnemonic(data_dir: &PathBuf) -> anyhow_lite::Result<(Mnemonic, bool)> {
+fn load_or_create_mnemonic(data_dir: &std::path::Path) -> anyhow_lite::Result<(Mnemonic, bool)> {
     let path = data_dir.join("mnemonic.txt");
     if path.exists() {
         let words = std::fs::read_to_string(&path)?;
