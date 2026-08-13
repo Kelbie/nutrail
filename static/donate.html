@@ -5,134 +5,389 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Donate</title>
 <style>
-  :root { color-scheme: light dark; }
-  * { box-sizing: border-box; }
+  /* One world: warm charcoal ink, amber reserved for the primary action. */
+  :root {
+    --ink: #171310;        /* card surface */
+    --ink-2: #211b16;      /* raised step */
+    --ink-3: #2b241d;      /* hover step */
+    --well: #0f0c0a;       /* inset track */
+    --text: #f0e9df;
+    --muted: #a2968a;
+    --faint: #837768;
+    --amber: #f7a01b;
+    --amber-deep: #d9860a;
+    --danger: #e07856;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
   body {
-    margin: 0; padding: 16px; font: 15px/1.5 system-ui, sans-serif;
-    background: transparent; color: #1a1a1a;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: transparent; color: var(--text);
+    display: flex; align-items: flex-start; justify-content: center;
+    -webkit-font-smoothing: antialiased;
   }
-  @media (prefers-color-scheme: dark) { body { color: #eaeaea; } }
   .card {
-    max-width: 340px; margin: 0 auto; border: 1px solid rgba(128,128,128,.35);
-    border-radius: 12px; padding: 20px; text-align: center;
+    width: 100%; max-width: 400px; padding: 22px 22px 16px;
+    background: var(--ink); border-radius: 14px;
+    /* self-coloured edge: a lip you feel, not a drawn outline */
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.055), inset 0 0 0 1px rgba(255,255,255,.03);
+    display: flex; flex-direction: column;
   }
-  h1 { font-size: 17px; margin: 0 0 12px; }
-  .amounts { display: flex; gap: 8px; justify-content: center; margin-bottom: 12px; }
-  button {
-    font: inherit; padding: 8px 14px; border-radius: 8px; cursor: pointer;
-    border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit;
+  header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+  h1 { font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+  .sat { font-size: 12px; color: var(--faint); }
+
+  /* Segmented control: solid track, sliding plate */
+  .seg {
+    position: relative; display: flex; background: var(--well);
+    border-radius: 9px; padding: 3px; margin-bottom: 18px;
   }
-  button.primary { background: #f7931a; border-color: #f7931a; color: #fff; font-weight: 600; }
-  button.sel { outline: 2px solid #f7931a; }
-  input {
-    font: inherit; width: 100%; padding: 8px; border-radius: 8px; margin-bottom: 12px;
-    border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit;
+  .seg-plate {
+    position: absolute; top: 3px; bottom: 3px; left: 3px; width: 40px;
+    background: var(--ink-3); border-radius: 6px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+    transition: transform .18s cubic-bezier(.3,.8,.4,1), width .18s cubic-bezier(.3,.8,.4,1);
   }
-  #qr { margin: 12px auto; display: none; background: #fff; padding: 8px; border-radius: 8px; width: fit-content; }
-  #qr img { display: block; }
-  .muted { opacity: .65; font-size: 13px; }
-  #invoice-box { display: none; }
-  #invoice { word-break: break-all; font-family: ui-monospace, monospace; font-size: 11px;
-    max-height: 60px; overflow: auto; text-align: left; margin: 8px 0; }
-  .row { display: flex; gap: 8px; justify-content: center; }
-  #paid { display: none; font-size: 32px; }
-  details { margin-top: 14px; text-align: left; }
-  summary { cursor: pointer; font-size: 13px; opacity: .75; }
-  textarea { width: 100%; font: 11px ui-monospace, monospace; min-height: 60px; margin: 8px 0;
-    border-radius: 8px; border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit; }
-  #msg { font-size: 13px; min-height: 18px; }
+  .seg button {
+    position: relative; z-index: 1; flex: 1; padding: 7px 0;
+    font: 600 13px/1 system-ui, sans-serif; color: var(--muted);
+    background: none; border: 0; border-radius: 6px; cursor: pointer;
+    transition: color .18s;
+  }
+  .seg button[aria-selected="true"] { color: var(--text); }
+  .seg button:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
+
+  .pane { display: none; flex-direction: column; gap: 12px; }
+  .pane.on { display: flex; }
+
+  .chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .chips button {
+    padding: 10px 0; font: 600 14px/1 system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted); background: var(--ink-2); border: 0; border-radius: 8px;
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  .chips button:hover { background: var(--ink-3); }
+  .chips button.sel { background: var(--ink-3); color: var(--amber); }
+
+  .amt {
+    display: flex; align-items: center; background: var(--well);
+    border-radius: 8px; padding: 0 12px;
+  }
+  .amt input {
+    flex: 1; padding: 11px 0; font: 600 15px/1 system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    color: var(--text); background: none; border: 0; outline: none; min-width: 0;
+  }
+  .amt input::placeholder { color: var(--faint); font-weight: 500; }
+  .amt span { font-size: 12px; color: var(--faint); }
+  .amt:focus-within { box-shadow: inset 0 0 0 1px var(--amber-deep); }
+
+  .btn {
+    display: block; width: 100%; padding: 12px 0; text-align: center;
+    font: 650 14px/1 system-ui, sans-serif; border: 0; border-radius: 9px;
+    cursor: pointer; transition: background .15s; text-decoration: none;
+  }
+  .btn.primary { background: var(--amber); color: #1a1206; }
+  .btn.primary:hover { background: var(--amber-deep); }
+  .btn.primary:disabled { background: var(--ink-3); color: var(--faint); cursor: default; }
+  .btn.quiet { background: var(--ink-2); color: var(--text); }
+  .btn.quiet:hover { background: var(--ink-3); }
+  .row { display: flex; gap: 8px; }
+  .row .btn { flex: 1; }
+
+  .qr {
+    align-self: center; background: #fff; border-radius: 10px; padding: 10px;
+    line-height: 0; width: 208px; height: 208px;
+  }
+  .qr img { width: 188px; height: 188px; display: block; }
+
+  .code {
+    display: flex; align-items: center; gap: 8px; background: var(--well);
+    border-radius: 8px; padding: 8px 10px;
+  }
+  .code samp {
+    flex: 1; min-width: 0; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .code button {
+    flex: none; font: 600 12px/1 system-ui, sans-serif; color: var(--text);
+    background: var(--ink-3); border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer;
+  }
+
+  .hint { font-size: 12.5px; color: var(--muted); }
+  .hint.center { text-align: center; }
+  .wait { text-align: center; font-size: 13px; color: var(--muted); }
+  .wait::after { content: '…'; animation: dots 1.4s steps(4) infinite; }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+  @media (prefers-reduced-motion: reduce) {
+    .seg-plate { transition: none; }
+    .wait::after { animation: none; content: '…'; }
+  }
+
+  textarea {
+    width: 100%; min-height: 56px; resize: vertical; padding: 10px 12px;
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--text); background: var(--well); border: 0; border-radius: 8px; outline: none;
+  }
+  textarea:focus-visible { box-shadow: inset 0 0 0 1px var(--amber-deep); }
+  textarea::placeholder { color: var(--faint); }
+
+  .or { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 11px; }
+  .or i { flex: 1; height: 2px; border-radius: 1px; background: var(--ink-2); }
+
+  #view-success { display: none; flex-direction: column; align-items: center; gap: 10px; padding: 26px 0 18px; }
+  #view-success svg { width: 52px; height: 52px; }
+  #view-success .thanks { font-size: 17px; font-weight: 650; }
+  #view-success .got { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .err { font-size: 12.5px; color: var(--danger); min-height: 0; }
+  .err:empty { display: none; }
+
+  footer { margin-top: 12px; text-align: center; font-size: 11px; color: var(--faint); }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>&#9889; Donate sats</h1>
-  <div id="step-amount">
-    <div class="amounts">
-      <button data-a="210">210</button>
-      <button data-a="1000" class="sel">1,000</button>
-      <button data-a="5000">5,000</button>
-      <button data-a="21000">21k</button>
-    </div>
-    <button class="primary" id="go">Get invoice</button>
-  </div>
-  <div id="invoice-box">
-    <div id="qr"></div>
-    <div id="invoice"></div>
-    <div class="row">
-      <button id="copy">Copy</button>
-      <a id="open" href="#"><button>Open wallet</button></a>
-      <button id="back">&#8592;</button>
-    </div>
-    <p class="muted">Waiting for payment&hellip;</p>
-  </div>
-  <div id="paid">&#128571;<br><span style="font-size:16px">Thank you!</span></div>
-  <p id="msg"></p>
-  <details>
-    <summary>Pay with Cashu instead</summary>
-    <textarea id="token" placeholder="Paste a cashuB... token"></textarea>
-    <button id="send-token">Send token</button>
-  </details>
-</div>
-<script>
-const base = location.origin;
-let amount = 1000, poll = null;
-const $ = (id) => document.getElementById(id);
+  <header>
+    <h1>Donate</h1>
+    <span class="sat">sats over bitcoin</span>
+  </header>
 
-document.querySelectorAll('.amounts button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.amounts button').forEach(x => x.classList.remove('sel'));
-  b.classList.add('sel'); amount = +b.dataset.a;
+  <div class="seg" role="tablist" aria-label="Payment method" id="seg" hidden>
+    <div class="seg-plate" id="plate"></div>
+  </div>
+
+  <div id="view-methods">
+    <!-- Lightning -->
+    <section class="pane on" id="pane-lightning" role="tabpanel">
+      <div id="ln-pick" style="display:flex;flex-direction:column;gap:14px">
+        <div class="chips" data-for="ln">
+          <button data-a="500">500</button>
+          <button data-a="2100" class="sel">2 100</button>
+          <button data-a="10000">10 000</button>
+          <button data-a="50000">50 000</button>
+        </div>
+        <div class="amt"><input id="ln-custom" type="number" min="1" inputmode="numeric" placeholder="Custom amount"><span>sats</span></div>
+        <button class="btn primary" id="ln-go">Request invoice</button>
+      </div>
+      <div id="ln-pay" style="display:none;flex-direction:column;gap:12px">
+        <div class="qr"><img id="ln-qr" alt="Lightning invoice QR code"></div>
+        <div class="code"><samp id="ln-str"></samp><button data-copy="ln-str">Copy</button></div>
+        <div class="row">
+          <a class="btn quiet" id="ln-open" href="#">Open wallet</a>
+          <button class="btn quiet" id="ln-back">Change amount</button>
+        </div>
+        <p class="wait">Waiting for payment</p>
+      </div>
+    </section>
+
+    <!-- Cashu -->
+    <section class="pane" id="pane-cashu" role="tabpanel">
+      <div class="qr"><img id="cq-qr" alt="Cashu payment request QR code"></div>
+      <div class="code"><samp id="cq-str"></samp><button data-copy="cq-str">Copy</button></div>
+      <p class="hint center">Scan or paste in a Cashu wallet. Any amount.</p>
+      <div class="or"><i></i>or paste a token<i></i></div>
+      <textarea id="token" placeholder="cashuB…" spellcheck="false"></textarea>
+      <button class="btn primary" id="token-go">Redeem token</button>
+    </section>
+
+    <!-- On-chain -->
+    <section class="pane" id="pane-onchain" role="tabpanel">
+      <div id="oc-pick" style="display:flex;flex-direction:column;gap:14px">
+        <p class="hint">Best for larger amounts. The address is single-use and needs one confirmation.</p>
+        <button class="btn primary" id="oc-go">Get address</button>
+      </div>
+      <div id="oc-pay" style="display:none;flex-direction:column;gap:12px">
+        <div class="qr"><img id="oc-qr" alt="Bitcoin address QR code"></div>
+        <div class="code"><samp id="oc-str"></samp><button data-copy="oc-str">Copy</button></div>
+        <p class="wait">Watching for the transaction</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- Success -->
+  <div id="view-success">
+    <svg viewBox="0 0 52 52" fill="none" aria-hidden="true">
+      <circle cx="26" cy="26" r="24" stroke="#2b241d" stroke-width="3"/>
+      <path id="tick" d="M15 27 L23 35 L38 18" stroke="#f7a01b" stroke-width="4"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="thanks">Thank you</div>
+    <div class="got" id="got"></div>
+    <button class="btn quiet" id="again" style="width:auto;padding:10px 22px">Donate again</button>
+  </div>
+
+  <p class="err" id="err" role="alert"></p>
+  <footer id="foot"></footer>
+</div>
+
+<script>
+'use strict';
+const base = location.origin;
+const $ = (id) => document.getElementById(id);
+const state = { amount: 2100, poll: null, methods: [] };
+
+const post = async (path, body) => {
+  const r = await fetch(base + path, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j.output;
+};
+const qrSrc = (data) => base + '/donate/qr?data=' + encodeURIComponent(data);
+const fail = (e) => { $('err').textContent = e.message || String(e); };
+const clearErr = () => { $('err').textContent = ''; };
+
+/* ---- tabs ---- */
+const LABELS = { lightning: 'Lightning', cashu: 'Cashu', onchain: 'On-chain' };
+function buildTabs(methods) {
+  const seg = $('seg');
+  seg.hidden = methods.length < 2;
+  methods.forEach((m, i) => {
+    const b = document.createElement('button');
+    b.role = 'tab'; b.textContent = LABELS[m]; b.dataset.m = m;
+    b.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+    b.onclick = () => select(m);
+    seg.appendChild(b);
+  });
+  select(methods[0]);
+}
+function select(m) {
+  clearErr(); stopPoll();
+  document.querySelectorAll('.seg button').forEach((b) => {
+    b.setAttribute('aria-selected', b.dataset.m === m ? 'true' : 'false');
+    if (b.dataset.m === m) {
+      $('plate').style.width = b.offsetWidth + 'px';
+      $('plate').style.transform = 'translateX(' + (b.offsetLeft - 3) + 'px)';
+    }
+  });
+  document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('on', p.id === 'pane-' + m));
+  if (m === 'lightning') startPollIfVisible('ln');
+  if (m === 'onchain') startPollIfVisible('oc');
+}
+
+/* ---- polling ---- */
+function stopPoll() { clearInterval(state.poll); state.poll = null; }
+function watch(id, everyMs, sats) {
+  stopPoll();
+  state.poll = setInterval(async () => {
+    try {
+      const s = await (await fetch(base + '/donate/quote/' + id)).json();
+      const st = s.output && s.output.state;
+      if (st === 'PAID' || st === 'ISSUED') { stopPoll(); success(sats); }
+    } catch (_) { /* transient; keep polling */ }
+  }, everyMs);
+}
+const live = { ln: null, oc: null };
+function startPollIfVisible(kind) {
+  if (live[kind]) watch(live[kind].id, kind === 'ln' ? 3000 : 15000, live[kind].sats);
+}
+
+/* ---- success ---- */
+function success(sats) {
+  $('view-methods').style.display = 'none';
+  $('seg').style.display = 'none';
+  $('view-success').style.display = 'flex';
+  $('got').textContent = sats ? sats.toLocaleString('en-US').replace(/,/g, ' ') + ' sats received' : 'Payment received';
+  const tick = $('tick');
+  const len = tick.getTotalLength();
+  tick.style.strokeDasharray = len;
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    tick.style.strokeDashoffset = len;
+    tick.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: 450, easing: 'ease-out', fill: 'forwards' });
+  }
+}
+$('again').onclick = () => location.reload();
+
+/* ---- lightning ---- */
+document.querySelectorAll('.chips button').forEach((b) => b.onclick = () => {
+  document.querySelectorAll('.chips button').forEach((x) => x.classList.remove('sel'));
+  b.classList.add('sel'); state.amount = +b.dataset.a; $('ln-custom').value = '';
+});
+$('ln-custom').oninput = () => {
+  document.querySelectorAll('.chips button').forEach((x) => x.classList.remove('sel'));
+  state.amount = Math.max(1, Math.floor(+$('ln-custom').value || 0));
+};
+$('ln-go').onclick = async () => {
+  clearErr();
+  if (!state.amount) return fail(new Error('Pick an amount first'));
+  $('ln-go').disabled = true; $('ln-go').textContent = 'Requesting…';
+  try {
+    const q = await post('/donate/quote', { method: 'lightning', amount: state.amount });
+    live.ln = { id: q.id, sats: state.amount };
+    $('ln-qr').src = qrSrc('lightning:' + q.request);
+    $('ln-str').textContent = q.request;
+    $('ln-open').href = 'lightning:' + q.request;
+    $('ln-pick').style.display = 'none';
+    $('ln-pay').style.display = 'flex';
+    watch(q.id, 3000, state.amount);
+  } catch (e) { fail(e); }
+  $('ln-go').disabled = false; $('ln-go').textContent = 'Request invoice';
+};
+$('ln-back').onclick = () => {
+  stopPoll(); live.ln = null;
+  $('ln-pay').style.display = 'none';
+  $('ln-pick').style.display = 'flex';
+};
+
+/* ---- cashu ---- */
+$('token-go').onclick = async () => {
+  clearErr();
+  const token = $('token').value.trim();
+  if (!token) return fail(new Error('Paste a token first'));
+  $('token-go').disabled = true; $('token-go').textContent = 'Redeeming…';
+  try {
+    const out = await post('/donate/cashu', { token });
+    const sats = parseInt(String(out).replace(/\D/g, ''), 10) || 0;
+    success(sats);
+  } catch (e) { fail(e); }
+  $('token-go').disabled = false; $('token-go').textContent = 'Redeem token';
+};
+
+/* ---- onchain ---- */
+$('oc-go').onclick = async () => {
+  clearErr();
+  $('oc-go').disabled = true; $('oc-go').textContent = 'Requesting…';
+  try {
+    const q = await post('/donate/quote', { method: 'onchain' });
+    live.oc = { id: q.id, sats: 0 };
+    $('oc-qr').src = qrSrc('bitcoin:' + q.request);
+    $('oc-str').textContent = q.request;
+    $('oc-pick').style.display = 'none';
+    $('oc-pay').style.display = 'flex';
+    watch(q.id, 15000, 0);
+  } catch (e) { fail(e); }
+  $('oc-go').disabled = false; $('oc-go').textContent = 'Get address';
+};
+
+/* ---- copy ---- */
+document.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => {
+  await navigator.clipboard.writeText($(b.dataset.copy).textContent);
+  const was = b.textContent; b.textContent = 'Copied';
+  setTimeout(() => { b.textContent = was; }, 1200);
 });
 
-$('go').onclick = async () => {
-  $('msg').textContent = '';
+/* ---- boot ---- */
+(async () => {
   try {
-    const r = await fetch(base + '/donate/bolt11', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amount })
-    });
-    const j = await r.json();
-    if (j.error) throw new Error(j.error);
-    const { request, id } = j.output;
-    $('step-amount').style.display = 'none';
-    $('invoice-box').style.display = 'block';
-    $('invoice').textContent = request;
-    $('qr').style.display = 'block';
-    $('qr').innerHTML = '<img width="220" height="220" alt="invoice QR" src="' + base +
-      '/donate/qr?data=' + encodeURIComponent('lightning:' + request) + '">';
-    $('open').href = 'lightning:' + request;
-    $('copy').onclick = () => navigator.clipboard.writeText(request);
-    poll = setInterval(async () => {
-      const s = await (await fetch(base + '/donate/bolt11/' + id)).json();
-      const st = s.output && s.output.state;
-      if (st === 'PAID' || st === 'ISSUED') {
-        clearInterval(poll);
-        $('invoice-box').style.display = 'none';
-        $('paid').style.display = 'block';
-      }
-    }, 3000);
-  } catch (e) { $('msg').textContent = e.message; }
-};
-
-$('back').onclick = () => {
-  clearInterval(poll);
-  $('invoice-box').style.display = 'none';
-  $('step-amount').style.display = 'block';
-};
-
-$('send-token').onclick = async () => {
-  $('msg').textContent = '';
-  try {
-    const r = await fetch(base + '/donate/cashu', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: $('token').value.trim() })
-    });
-    const j = await r.json();
-    if (j.error) throw new Error(j.error);
-    $('token').value = '';
-    $('paid').style.display = 'block';
-    $('step-amount').style.display = 'none';
-  } catch (e) { $('msg').textContent = e.message; }
-};
+    const r = await (await fetch(base + '/donate/config')).json();
+    const cfg = r.output;
+    state.methods = cfg.methods;
+    if (cfg.creq) {
+      $('cq-qr').src = qrSrc(cfg.creq);
+      $('cq-str').textContent = cfg.creq;
+    }
+    $('foot').textContent = 'ecash via ' + new URL(cfg.mint).host;
+    buildTabs(cfg.methods);
+  } catch (e) {
+    // Config unreachable: leave lightning pane visible so the card still works.
+    document.querySelector('#pane-lightning').classList.add('on');
+    fail(e);
+  }
+})();
 </script>
 </body>
 </html>

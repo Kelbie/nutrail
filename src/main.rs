@@ -22,7 +22,9 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use bip39::Mnemonic;
+use cdk::mint_url::MintUrl;
 use cdk::nuts::nut00::KnownMethod;
+use cdk::nuts::nut18::{PaymentRequest, PaymentRequestPayload, Transport, TransportType};
 use cdk::nuts::{CurrencyUnit, PaymentMethod};
 use cdk::wallet::{ReceiveOptions, SendOptions, Wallet};
 use cdk::Amount;
@@ -43,6 +45,26 @@ struct App {
     payout_address: Option<String>,
     sweep_threshold: u64,
     events: broadcast::Sender<String>,
+    onchain_supported: bool,
+    public_url: Option<String>,
+}
+
+impl App {
+    /// External base URL for links the donor's wallet must reach (NUT-18 target).
+    fn base_url(&self, headers: &HeaderMap) -> String {
+        if let Some(url) = &self.public_url {
+            return url.trim_end_matches('/').to_string();
+        }
+        let host = headers
+            .get(header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("localhost");
+        let proto = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(if host.starts_with("localhost") { "http" } else { "https" });
+        format!("{proto}://{host}")
+    }
 }
 
 impl App {
@@ -332,15 +354,103 @@ async fn events(
 // Public donation routes (CORS *, no auth)
 // ---------------------------------------------------------------------------
 
-async fn donate_bolt11(
+async fn donate_config(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let mut methods = vec!["lightning", "cashu"];
+    if app.onchain_supported {
+        methods.push("onchain");
+    }
+    ok(json!({
+        "methods": methods,
+        "mint": app.mint_url,
+        "creq": build_creq(&app, &headers),
+    }))
+}
+
+fn build_creq(app: &App, headers: &HeaderMap) -> Option<String> {
+    let mint_url = MintUrl::from_str(&app.mint_url).ok()?;
+    let request = PaymentRequest::builder()
+        .payment_id("donation")
+        .unit(CurrencyUnit::Sat)
+        .add_mint(mint_url)
+        .description("Donation")
+        .add_transport(Transport {
+            _type: TransportType::HttpPost,
+            target: format!("{}/donate/nut18", app.base_url(headers)),
+            tags: vec![],
+        })
+        .build();
+    Some(request.to_string())
+}
+
+#[derive(serde::Deserialize)]
+struct DonateQuoteBody {
+    method: String,
+    amount: Option<u64>,
+}
+
+async fn donate_quote(
     State(app): State<Arc<App>>,
-    Json(body): Json<ReceiveBolt11Body>,
+    Json(body): Json<DonateQuoteBody>,
 ) -> Response {
-    receive_bolt11_inner(&app, body.amount).await
+    match body.method.as_str() {
+        "lightning" => match body.amount {
+            Some(amount) => receive_bolt11_inner(&app, amount).await,
+            None => err(StatusCode::BAD_REQUEST, "Amount required for lightning"),
+        },
+        "onchain" => {
+            if !app.onchain_supported {
+                return err(StatusCode::BAD_REQUEST, "Mint does not support onchain");
+            }
+            match app
+                .wallet
+                .mint_quote(
+                    PaymentMethod::Known(KnownMethod::Onchain),
+                    body.amount.map(Amount::from),
+                    None,
+                    None,
+                )
+                .await
+            {
+                Ok(quote) => {
+                    ok(json!({ "request": quote.request, "id": quote.id, "kind": "onchain" }))
+                }
+                Err(e) => err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to create onchain quote: {e}"),
+                ),
+            }
+        }
+        other => err(StatusCode::BAD_REQUEST, format!("Unknown method: {other}")),
+    }
 }
 
 async fn donate_quote_status(State(app): State<Arc<App>>, Path(id): Path<String>) -> Response {
     quote_status_inner(&app, &id).await
+}
+
+/// NUT-18 HTTP POST transport target: the donor's wallet POSTs the payment
+/// payload (proofs) here after paying the creq shown on the widget.
+async fn donate_nut18(
+    State(app): State<Arc<App>>,
+    Json(payload): Json<PaymentRequestPayload>,
+) -> Response {
+    if payload.mint.to_string().trim_end_matches('/') != app.mint_url.trim_end_matches('/') {
+        return err(StatusCode::BAD_REQUEST, "Proofs are not from the configured mint");
+    }
+    if payload.unit != CurrencyUnit::Sat {
+        return err(StatusCode::BAD_REQUEST, "Only sat is accepted");
+    }
+    match app
+        .wallet
+        .receive_proofs(payload.proofs, ReceiveOptions::default(), payload.memo, None)
+        .await
+    {
+        Ok(amount) => {
+            app.emit("received", json!({ "method": "nut18", "sats": u64::from(amount) }));
+            ok(json!(format!("Received {amount}")))
+        }
+        Err(e) => err(StatusCode::BAD_REQUEST, format!("Receive failed: {e}")),
+    }
 }
 
 async fn donate_cashu(
@@ -524,6 +634,36 @@ async fn main() -> anyhow_lite::Result<()> {
         }
     }
 
+    // Capability detection: only offer methods the configured mint supports.
+    let onchain_supported = match wallet.fetch_mint_info().await {
+        Ok(info) => serde_json::to_value(&info)
+            .ok()
+            .and_then(|v| {
+                v.pointer("/nuts/4/methods").map(|methods| {
+                    methods
+                        .as_array()
+                        .map(|a| a.iter().any(|m| m["method"] == "onchain"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false),
+        Err(e) => {
+            tracing::warn!("could not fetch mint info at boot: {e}");
+            false
+        }
+    };
+    tracing::info!("mint {mint_url}: onchain supported = {onchain_supported}");
+
+    let public_url = std::env::var("PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("RAILWAY_PUBLIC_DOMAIN")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|d| format!("https://{d}"))
+        });
+
     let (events_tx, _) = broadcast::channel(256);
     let app = Arc::new(App {
         wallet,
@@ -533,6 +673,8 @@ async fn main() -> anyhow_lite::Result<()> {
         payout_address,
         sweep_threshold,
         events: events_tx,
+        onchain_supported,
+        public_url,
     });
 
     if app.payout_address.is_none() {
@@ -545,9 +687,11 @@ async fn main() -> anyhow_lite::Result<()> {
         .route("/ping", get(ping))
         .route("/donate", get(donate_page))
         .route("/donate/widget.js", get(widget_js))
-        .route("/donate/bolt11", post(donate_bolt11))
-        .route("/donate/bolt11/{id}", get(donate_quote_status))
+        .route("/donate/config", get(donate_config))
+        .route("/donate/quote", post(donate_quote))
+        .route("/donate/quote/{id}", get(donate_quote_status))
         .route("/donate/cashu", post(donate_cashu))
+        .route("/donate/nut18", post(donate_nut18))
         .route("/donate/qr", get(donate_qr))
         .layer(
             CorsLayer::new()

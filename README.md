@@ -51,7 +51,8 @@ Then:
 |---|---|---|---|
 | `SETUP_TOKEN` | yes | — | Bearer token for the wallet API + admin page |
 | `MINT_URL` | no | testnut | The Cashu mint to receive through |
-| `PAYOUT_LN_ADDRESS` | no | — | Where auto-melt sends funds; unset = accumulate as ecash |
+| `PAYOUT_LN_ADDRESS` | no | — | **Any lightning address** (`you@walletofsatoshi.com`, `you@getalby.com`, Zeus, phoenixd, …). The sweeper auto-melts the whole balance to it every 30s once it clears `SWEEP_THRESHOLD_SATS`. Unset = accumulate as ecash |
+| `PUBLIC_URL` | no | Railway domain | External base URL used in the NUT-18 `creq` transport; auto-derived from `RAILWAY_PUBLIC_DOMAIN` or the request Host |
 | `SWEEP_THRESHOLD_SATS` | no | `100` | Sweep when balance reaches this |
 | `RESTORE_MNEMONIC` | no | — | NUT-13 restore on a fresh volume, then unset it |
 | `DATA_DIR` | no | `/data` | Volume mount (sqlite DB + mnemonic) |
@@ -77,7 +78,20 @@ The wallet API mirrors [cocod](https://github.com/Egge21M/cocod)'s route table a
 | `GET /history` | `/history` | PoC: pending melt quotes only |
 | `GET /events` | `/events` | SSE: `received`, `minted`, `swept`, `melt_finalized` |
 | `GET /admin`, `GET /admin/mnemonic` | — | nutrail addition (seed backup UI) |
-| `POST /donate/bolt11`, `GET /donate/bolt11/:id`, `POST /donate/cashu`, `GET /donate/qr`, `GET /donate`, `GET /donate/widget.js` | — | public widget surface |
+
+Public widget surface (CORS `*`, no auth):
+
+| Route | Purpose |
+|---|---|
+| `GET /donate/config` | methods the mint supports (`lightning`, `cashu`, `onchain`), mint URL, reusable NUT-18 `creq` |
+| `POST /donate/quote {method, amount?}` | dispatches to a bolt11 (NUT-04) or onchain (NUT-30) mint quote |
+| `GET /donate/quote/:id` | quote state (`UNPAID` / `PAID` / `ISSUED`) — same shape for both methods |
+| `POST /donate/cashu {token}` | redeem a pasted ecash token |
+| `POST /donate/nut18` | NUT-18 HTTP transport target: donor wallets POST the payment payload here after paying the `creq` |
+| `GET /donate`, `GET /donate/widget.js`, `GET /donate/qr?data=` | widget page, embed script, QR renderer |
+
+The widget only shows methods the configured mint actually supports (capability
+detection at boot from the mint's NUT-04 method list).
 
 Not mirrored (yet): `/init` + `/unlock` (nutrail boots headless and self-initializes;
 passphrase-encrypted seed-at-rest is a good follow-up), `/npc/*` (npub.cash),
