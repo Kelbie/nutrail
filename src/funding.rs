@@ -8,8 +8,8 @@
 //! Loop: every 6h read the VM's expiry; within the renewal window, fetch a
 //! renewal invoice (`GET /api/v1/vm/{id}/renew?method=lightning`, amount in
 //! millisats) and melt ecash to pay it. After every renewal the runway reserve
-//! is re-derived as `monthly cost × 1.5` so a bitcoin price move between
-//! renewals stays covered.
+//! is re-derived as `monthly cost × 1.1` — one payment of runway plus 10%
+//! headroom for bitcoin price moves between renewals.
 
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
@@ -29,9 +29,9 @@ use crate::{melt_by_quote_id, App};
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// Renew when fewer than this many days remain.
 const RENEW_WINDOW_DAYS: f64 = 3.0;
-/// Runway multiplier over one month's cost ("50% over").
-const RESERVE_FACTOR_NUM: u64 = 3;
-const RESERVE_FACTOR_DEN: u64 = 2;
+/// Runway multiplier over one month's cost: next payment + 10% headroom.
+const RESERVE_FACTOR_NUM: u64 = 11;
+const RESERVE_FACTOR_DEN: u64 = 10;
 
 pub struct FundingConfig {
     pub api: String,

@@ -56,7 +56,7 @@ spending anything.
 
 - The sweeper runs every 30s: everything above the reserve melts to your
   `PAYOUT_LN_ADDRESS`; the reserve stays in the wallet as ecash.
-- **The reserve is 1.5× one month's hosting** (50% headroom for bitcoin price
+- **The reserve is one month's hosting + 10%** (headroom for bitcoin price
   moves), re-derived from the actual invoice at every renewal.
 - Every 6 hours the server checks its own VM expiry (NIP-98-signed call to
   the LNVPS API using the key derived from its seed). **Within 3 days of
@@ -75,7 +75,7 @@ spending anything.
 | `MINT_URL` | no | testnut | The Cashu mint to receive through |
 | `PAYOUT_LN_ADDRESS` | no | — | **Any lightning address**; the sweeper melts everything above the reserve to it every 30s. Unset = accumulate as ecash |
 | `LNVPS_VM_ID` | no | — | Enables self-funding: the VM this server runs on (set by spinup) |
-| `RENEWAL_COST_MSATS` | no | — | First month's invoice amount; seeds the reserve at 1.5× (set by spinup) |
+| `RENEWAL_COST_MSATS` | no | — | First month's invoice amount; seeds the reserve at 1.1× (set by spinup) |
 | `RESERVE_SATS` | no | `0` | Manual reserve override when not using LNVPS self-funding |
 | `LNVPS_API` | no | `api.lnvps.net` | LNVPS API base |
 | `SWEEP_THRESHOLD_SATS` | no | `100` | Sweep only when the surplus reaches this |

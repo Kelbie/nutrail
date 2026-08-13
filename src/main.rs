@@ -48,7 +48,7 @@ struct App {
     payout_address: Option<String>,
     sweep_threshold: u64,
     /// Sats held back from every sweep — the hosting runway kept as ecash.
-    /// Re-derived as monthly cost × 1.5 after every renewal.
+    /// Re-derived as monthly cost × 1.1 after every renewal.
     reserve_sats: AtomicU64,
     /// Latest hosting status from the funding loop, served at GET /runway.
     runway: tokio::sync::RwLock<Option<serde_json::Value>>,
@@ -668,7 +668,7 @@ async fn main() -> anyhow_lite::Result<()> {
         .unwrap_or(100);
     // Initial reserve: derived from the first month's invoice when the spinup
     // CLI passes RENEWAL_COST_MSATS; the funding loop re-derives it after every
-    // renewal (monthly cost × 1.5).
+    // renewal (monthly cost × 1.1).
     let reserve_sats: u64 = std::env::var("RENEWAL_COST_MSATS")
         .ok()
         .and_then(|v| v.parse().ok())

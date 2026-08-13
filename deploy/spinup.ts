@@ -281,8 +281,8 @@ embed        <script src="https://${domain}/donate/widget.js" defer></script>
 LNVPS panel  https://lnvps.net — log in with a nostr extension
              holding the nsec from the secrets file (VM #${vm.id})
 
-Sweeps to ${payout}, keeps ~${Math.ceil((costMsats / 1000) * 1.5).toLocaleString()} sats
-(1.5× monthly cost) as ecash runway, and renews itself ~3 days
+Sweeps to ${payout}, keeps ~${Math.ceil((costMsats / 1000) * 1.1).toLocaleString()} sats
+(next month's payment + 10%) as ecash runway, and renews itself ~3 days
 before expiry by melting that runway.${isTestnut ? "\n\n⚠ testnut mint: self-renewal will NOT work — renew manually." : ""}
 
 Everything above is also in ./${secretsFile} (chmod 600) —
