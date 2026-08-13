@@ -6,6 +6,7 @@ COPY static ./static
 RUN cargo build --release
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/Kelbie/nutrail"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*

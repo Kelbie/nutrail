@@ -35,6 +35,8 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
 
+mod funding;
+
 const DEFAULT_MINT: &str = "https://testnut.cashudevkit.org";
 
 struct App {
@@ -44,9 +46,12 @@ struct App {
     setup_token: String,
     payout_address: Option<String>,
     sweep_threshold: u64,
+    /// Sats held back from every sweep — the hosting-bill runway kept as ecash.
+    reserve_sats: u64,
     events: broadcast::Sender<String>,
     onchain_supported: bool,
     public_url: Option<String>,
+    bl_token: Option<String>,
 }
 
 impl App {
@@ -94,9 +99,26 @@ fn load_or_create_mnemonic(data_dir: &PathBuf) -> anyhow_lite::Result<(Mnemonic,
         return Ok((Mnemonic::from_str(words.trim())?, false));
     }
 
-    let (mnemonic, restored) = match std::env::var("RESTORE_MNEMONIC") {
-        Ok(words) if !words.trim().is_empty() => (Mnemonic::from_str(words.trim())?, true),
-        _ => (Mnemonic::generate(12)?, false),
+    // SEED_ENTROPY_HEX: raw entropy handed in by the provisioning script
+    // (generated on the operator's machine from the OS CSPRNG). 16-32 bytes,
+    // hex-encoded; 32 bytes = 24 words.
+    let entropy_hex = std::env::var("SEED_ENTROPY_HEX").ok().filter(|s| !s.trim().is_empty());
+    let (mnemonic, restored) = if let Some(hex) = entropy_hex {
+        let bytes = decode_hex(hex.trim())
+            .map_err(|e| format!("SEED_ENTROPY_HEX is not valid hex: {e}"))?;
+        if ![16, 20, 24, 28, 32].contains(&bytes.len()) {
+            return Err(format!(
+                "SEED_ENTROPY_HEX must be 16-32 bytes (multiple of 4); got {}",
+                bytes.len()
+            )
+            .into());
+        }
+        (Mnemonic::from_entropy(&bytes)?, false)
+    } else {
+        match std::env::var("RESTORE_MNEMONIC") {
+            Ok(words) if !words.trim().is_empty() => (Mnemonic::from_str(words.trim())?, true),
+            _ => (Mnemonic::generate(12)?, false),
+        }
     };
 
     // OS CSPRNG entropy via bip39's rand feature; never derived from anything else.
@@ -112,6 +134,16 @@ fn load_or_create_mnemonic(data_dir: &PathBuf) -> anyhow_lite::Result<(Mnemonic,
 // Tiny error alias so we don't pull in anyhow for three call sites.
 mod anyhow_lite {
     pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
+    if s.len() % 2 != 0 {
+        return Err("odd length".into());
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string()))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +181,7 @@ async fn status(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
         "mintUrl": app.mint_url,
         "payoutAddress": app.payout_address,
         "sweepThresholdSats": app.sweep_threshold,
+        "reserveSats": app.reserve_sats,
     }))
 }
 
@@ -296,6 +329,23 @@ async fn melt_by_quote_id(app: &App, quote_id: &str) -> Result<u64, cdk::Error> 
     let amount = u64::from(prepared.amount());
     prepared.confirm().await?;
     Ok(amount)
+}
+
+async fn runway(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    require_auth!(&app, &headers, None);
+    let wallet_sats = app.wallet.total_balance().await.map(u64::from).unwrap_or(0);
+    let hosting = match &app.bl_token {
+        Some(token) => {
+            let client = reqwest::Client::new();
+            funding::account_status(&client, token).await.ok()
+        }
+        None => None,
+    };
+    ok(json!({
+        "walletSats": wallet_sats,
+        "reserveSats": app.reserve_sats,
+        "hosting": hosting,
+    }))
 }
 
 async fn mints_list(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
@@ -549,8 +599,10 @@ async fn sweeper(app: Arc<App>) {
 
         if let Some(address) = &app.payout_address {
             match app.wallet.total_balance().await {
-                Ok(bal) if u64::from(bal) >= app.sweep_threshold => {
-                    if let Err(e) = sweep_to(&app, address, u64::from(bal)).await {
+                // Everything above the runway reserve gets swept out.
+                Ok(bal) if u64::from(bal) >= app.reserve_sats + app.sweep_threshold => {
+                    let sweepable = u64::from(bal) - app.reserve_sats;
+                    if let Err(e) = sweep_to(&app, address, sweepable).await {
                         tracing::warn!("sweep failed (will retry): {e}");
                     }
                 }
@@ -616,6 +668,10 @@ async fn main() -> anyhow_lite::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(100);
+    let reserve_sats: u64 = std::env::var("RESERVE_SATS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
 
     let (mnemonic, restored_from_env) = load_or_create_mnemonic(&data_dir)?;
     let seed = mnemonic.to_seed_normalized("");
@@ -672,9 +728,11 @@ async fn main() -> anyhow_lite::Result<()> {
         setup_token,
         payout_address,
         sweep_threshold,
+        reserve_sats,
         events: events_tx,
         onchain_supported,
         public_url,
+        bl_token: std::env::var("BL_API_TOKEN").ok().filter(|s| !s.is_empty()),
     });
 
     if app.payout_address.is_none() {
@@ -682,6 +740,13 @@ async fn main() -> anyhow_lite::Result<()> {
     }
 
     tokio::spawn(sweeper(app.clone()));
+
+    if let Some(cfg) = funding::FundingConfig::from_env() {
+        if app.reserve_sats == 0 {
+            tracing::warn!("self-funding is on but RESERVE_SATS=0 — sweeps will leave nothing to pay hosting with");
+        }
+        tokio::spawn(funding::run(app.clone(), cfg));
+    }
 
     let public = Router::new()
         .route("/ping", get(ping))
@@ -707,6 +772,7 @@ async fn main() -> anyhow_lite::Result<()> {
         .route("/receive/bolt11", post(receive_bolt11))
         .route("/send/cashu", post(send_cashu))
         .route("/send/bolt11", post(send_bolt11))
+        .route("/runway", get(runway))
         .route("/mints/list", get(mints_list))
         .route("/mints/info", get(mints_info))
         .route("/history", get(history))

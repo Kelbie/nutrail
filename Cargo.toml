@@ -16,6 +16,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
 bip39 = { version = "2.0", features = ["rand"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 serde = { version = "1", features = ["derive"] }

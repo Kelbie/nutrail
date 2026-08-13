@@ -48,7 +48,8 @@ async function refresh() {
   if (s.output) {
     $('cfg').textContent = 'mint: ' + s.output.mintUrl +
       ' | payout: ' + (s.output.payoutAddress || 'NOT SET — donations will pile up as ecash') +
-      ' | sweep at: ' + s.output.sweepThresholdSats + ' sats';
+      ' | sweep at: ' + s.output.sweepThresholdSats + ' sats' +
+      (s.output.reserveSats ? ' | hosting runway held back: ' + s.output.reserveSats + ' sats' : '');
   }
 }
 refresh(); setInterval(refresh, 15000);
