@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Cool Static Site — nutrail demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0 auto; max-width: 720px; padding: 48px 20px; font: 17px/1.7 Georgia, serif; }
+  h1 { font-family: system-ui, sans-serif; }
+  .divider { margin: 40px 0; border: 0; border-top: 1px solid rgba(128,128,128,.35); }
+  code { font-size: 14px; background: rgba(128,128,128,.15); padding: 2px 6px; border-radius: 4px; }
+  pre { background: rgba(128,128,128,.12); padding: 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+  .note { font-family: system-ui, sans-serif; font-size: 14px; opacity: .7; }
+</style>
+</head>
+<body>
+  <h1>My Cool Static Site</h1>
+  <p>Pretend this is a private tracker, a blog, or any static page hosted on
+  GitHub Pages. There is no backend here — just plain HTML. The donate button
+  floating bottom-right (and the inline card below) are served by a nutrail
+  instance on Railway.</p>
+
+  <p class="note">The whole integration is this one line:</p>
+  <pre>&lt;script src="https://nutrail-production.up.railway.app/donate/widget.js" defer&gt;&lt;/script&gt;</pre>
+
+  <hr class="divider">
+  <h2>Inline variant</h2>
+  <p class="note">Same script with <code>data-mode="inline"</code>:</p>
+
+  <script src="https://nutrail-production.up.railway.app/donate/widget.js" data-mode="inline" defer></script>
+
+  <hr class="divider">
+  <p>More pretend article text below the donation card, to show the widget
+  coexists with normal page content. Sats donated here go to the testnut mint
+  (worthless test sats) and are auto-melted by the sweeper if a payout address
+  is configured.</p>
+
+  <!-- Floating-button variant -->
+  <script src="https://nutrail-production.up.railway.app/donate/widget.js" defer></script>
+</body>
+</html>

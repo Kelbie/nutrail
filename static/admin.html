@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nutrail admin</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0 auto; max-width: 640px; padding: 24px 16px; font: 15px/1.6 system-ui, sans-serif; }
+  h1 { font-size: 20px; } h2 { font-size: 15px; margin: 24px 0 8px; }
+  pre, code { font: 12px ui-monospace, monospace; }
+  pre { padding: 12px; border: 1px solid rgba(128,128,128,.35); border-radius: 8px;
+        overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+           border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit; }
+  .big { font-size: 28px; font-weight: 700; }
+  #log { max-height: 240px; overflow-y: auto; }
+  .warn { color: #c0392b; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>&#129372; nutrail admin</h1>
+<h2>Balance (pending sweep)</h2>
+<div class="big" id="balance">&hellip;</div>
+<div id="cfg" class="muted"></div>
+
+<h2>Seed phrase backup</h2>
+<p class="warn">Write these 12 words down on paper. They recover any funds stuck mid-melt.
+Anyone with these words (or access to this server's disk) can spend the wallet's float.</p>
+<button id="reveal">Reveal mnemonic</button>
+<pre id="mnemonic" style="display:none"></pre>
+
+<h2>Live events</h2>
+<pre id="log">waiting for events&hellip;</pre>
+
+<script>
+const token = new URLSearchParams(location.search).get('token');
+const h = { Authorization: 'Bearer ' + token };
+const $ = (id) => document.getElementById(id);
+
+async function refresh() {
+  const b = await (await fetch('/balance', { headers: h })).json();
+  if (b.output) {
+    const mint = Object.keys(b.output)[0];
+    $('balance').textContent = b.output[mint].sats.toLocaleString() + ' sats';
+  }
+  const s = await (await fetch('/status', { headers: h })).json();
+  if (s.output) {
+    $('cfg').textContent = 'mint: ' + s.output.mintUrl +
+      ' | payout: ' + (s.output.payoutAddress || 'NOT SET — donations will pile up as ecash') +
+      ' | sweep at: ' + s.output.sweepThresholdSats + ' sats';
+  }
+}
+refresh(); setInterval(refresh, 15000);
+
+$('reveal').onclick = async () => {
+  const m = await (await fetch('/admin/mnemonic?token=' + token)).json();
+  $('mnemonic').textContent = m.output;
+  $('mnemonic').style.display = 'block';
+  $('reveal').style.display = 'none';
+};
+
+const es = new EventSource('/events?token=' + token);
+es.onmessage = (e) => {
+  $('log').textContent = new Date().toLocaleTimeString() + '  ' + e.data + '\n' + $('log').textContent;
+  refresh();
+};
+</script>
+</body>
+</html>

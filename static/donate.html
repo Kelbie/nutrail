@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Donate</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; font: 15px/1.5 system-ui, sans-serif;
+    background: transparent; color: #1a1a1a;
+  }
+  @media (prefers-color-scheme: dark) { body { color: #eaeaea; } }
+  .card {
+    max-width: 340px; margin: 0 auto; border: 1px solid rgba(128,128,128,.35);
+    border-radius: 12px; padding: 20px; text-align: center;
+  }
+  h1 { font-size: 17px; margin: 0 0 12px; }
+  .amounts { display: flex; gap: 8px; justify-content: center; margin-bottom: 12px; }
+  button {
+    font: inherit; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit;
+  }
+  button.primary { background: #f7931a; border-color: #f7931a; color: #fff; font-weight: 600; }
+  button.sel { outline: 2px solid #f7931a; }
+  input {
+    font: inherit; width: 100%; padding: 8px; border-radius: 8px; margin-bottom: 12px;
+    border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit;
+  }
+  #qr { margin: 12px auto; display: none; background: #fff; padding: 8px; border-radius: 8px; width: fit-content; }
+  #qr img { display: block; }
+  .muted { opacity: .65; font-size: 13px; }
+  #invoice-box { display: none; }
+  #invoice { word-break: break-all; font-family: ui-monospace, monospace; font-size: 11px;
+    max-height: 60px; overflow: auto; text-align: left; margin: 8px 0; }
+  .row { display: flex; gap: 8px; justify-content: center; }
+  #paid { display: none; font-size: 32px; }
+  details { margin-top: 14px; text-align: left; }
+  summary { cursor: pointer; font-size: 13px; opacity: .75; }
+  textarea { width: 100%; font: 11px ui-monospace, monospace; min-height: 60px; margin: 8px 0;
+    border-radius: 8px; border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit; }
+  #msg { font-size: 13px; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>&#9889; Donate sats</h1>
+  <div id="step-amount">
+    <div class="amounts">
+      <button data-a="210">210</button>
+      <button data-a="1000" class="sel">1,000</button>
+      <button data-a="5000">5,000</button>
+      <button data-a="21000">21k</button>
+    </div>
+    <button class="primary" id="go">Get invoice</button>
+  </div>
+  <div id="invoice-box">
+    <div id="qr"></div>
+    <div id="invoice"></div>
+    <div class="row">
+      <button id="copy">Copy</button>
+      <a id="open" href="#"><button>Open wallet</button></a>
+      <button id="back">&#8592;</button>
+    </div>
+    <p class="muted">Waiting for payment&hellip;</p>
+  </div>
+  <div id="paid">&#128571;<br><span style="font-size:16px">Thank you!</span></div>
+  <p id="msg"></p>
+  <details>
+    <summary>Pay with Cashu instead</summary>
+    <textarea id="token" placeholder="Paste a cashuB... token"></textarea>
+    <button id="send-token">Send token</button>
+  </details>
+</div>
+<script>
+const base = location.origin;
+let amount = 1000, poll = null;
+const $ = (id) => document.getElementById(id);
+
+document.querySelectorAll('.amounts button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.amounts button').forEach(x => x.classList.remove('sel'));
+  b.classList.add('sel'); amount = +b.dataset.a;
+});
+
+$('go').onclick = async () => {
+  $('msg').textContent = '';
+  try {
+    const r = await fetch(base + '/donate/bolt11', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount })
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    const { request, id } = j.output;
+    $('step-amount').style.display = 'none';
+    $('invoice-box').style.display = 'block';
+    $('invoice').textContent = request;
+    $('qr').style.display = 'block';
+    $('qr').innerHTML = '<img width="220" height="220" alt="invoice QR" src="' + base +
+      '/donate/qr?data=' + encodeURIComponent('lightning:' + request) + '">';
+    $('open').href = 'lightning:' + request;
+    $('copy').onclick = () => navigator.clipboard.writeText(request);
+    poll = setInterval(async () => {
+      const s = await (await fetch(base + '/donate/bolt11/' + id)).json();
+      const st = s.output && s.output.state;
+      if (st === 'PAID' || st === 'ISSUED') {
+        clearInterval(poll);
+        $('invoice-box').style.display = 'none';
+        $('paid').style.display = 'block';
+      }
+    }, 3000);
+  } catch (e) { $('msg').textContent = e.message; }
+};
+
+$('back').onclick = () => {
+  clearInterval(poll);
+  $('invoice-box').style.display = 'none';
+  $('step-amount').style.display = 'block';
+};
+
+$('send-token').onclick = async () => {
+  $('msg').textContent = '';
+  try {
+    const r = await fetch(base + '/donate/cashu', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: $('token').value.trim() })
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    $('token').value = '';
+    $('paid').style.display = 'block';
+    $('step-amount').style.display = 'none';
+  } catch (e) { $('msg').textContent = e.message; }
+};
+</script>
+</body>
+</html>

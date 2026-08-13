@@ -1,0 +1,10 @@
+# Railway service config — https://docs.railway.com/reference/config-as-code
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/ping"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5

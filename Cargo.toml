@@ -1,0 +1,28 @@
+[package]
+name = "nutrail"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85.0"
+description = "Minimal CDK-based donation wallet: receive lightning/ecash via a Cashu mint, auto-melt to your self-custodial lightning address. Built to deploy as a Railway template."
+license = "MIT"
+
+[dependencies]
+cdk = { git = "https://github.com/cashubtc/cdk", rev = "d5855ad880a2ef0f669d00c016d1a1bfd3dea5a1", default-features = false, features = ["wallet"] }
+cdk-sqlite = { git = "https://github.com/cashubtc/cdk", rev = "d5855ad880a2ef0f669d00c016d1a1bfd3dea5a1", default-features = false, features = ["wallet"] }
+
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
+bip39 = { version = "2.0", features = ["rand"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+strip = true
