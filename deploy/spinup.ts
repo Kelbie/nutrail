@@ -264,6 +264,11 @@ const remote = `#!/bin/bash
 set -e
 command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
 mkdir -p /opt/nutrail && cd /opt/nutrail
+# LNVPS uplinks run below 1500 MTU (1450 observed); Docker bridges default to
+# 1500, which blackholes big frames (TLS handshakes never complete). Pin the
+# compose network to the host NIC's MTU.
+HOST_MTU=$(ip -o link show | awk '/state UP/ && !/docker|br-|veth|lo/ { for (i=1;i<=NF;i++) if ($i=="mtu") print $(i+1) }' | head -1)
+HOST_MTU=\${HOST_MTU:-1450}
 cat > .env <<'ENV'
 ${env}
 ENV
@@ -272,7 +277,7 @@ ${domain} {
     reverse_proxy nutrail:3000
 }
 CADDY
-cat > docker-compose.yml <<'COMPOSE'
+cat > docker-compose.yml <<COMPOSE
 services:
   nutrail:
     image: ${IMAGE}
@@ -289,6 +294,11 @@ services:
 volumes:
   nutrail_data:
   caddy_data:
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "\${HOST_MTU}"
 COMPOSE
 docker compose up -d
 `;
